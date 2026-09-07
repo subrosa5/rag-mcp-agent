@@ -4,6 +4,14 @@ RAG + tool-use агент, реализованный без фреймворк�
 hybrid retrieval, реранкинг, tool-calling цикл и eval-харнес написаны напрямую
 поверх Postgres/pgvector, Groq и Cohere.
 
+![Python](https://img.shields.io/badge/Python-3.11-blue?style=flat-square&logo=python)
+![FastAPI](https://img.shields.io/badge/FastAPI-Render-009688?style=flat-square&logo=fastapi)
+![Next.js](https://img.shields.io/badge/Next.js-Vercel-black?style=flat-square&logo=next.js)
+![pgvector](https://img.shields.io/badge/pgvector-Neon-336791?style=flat-square&logo=postgresql)
+![Groq](https://img.shields.io/badge/Groq-LLM-orange?style=flat-square)
+![Cohere](https://img.shields.io/badge/Cohere-Rerank-39594d?style=flat-square)
+![No LangChain](https://img.shields.io/badge/No-LangChain-critical?style=flat-square)
+
 **Демо:** https://rag-agent-liard-two.vercel.app
 **Стек:** Next.js (Vercel) → FastAPI (Render) → Postgres/pgvector (Neon), LLM и реранкинг через Groq/Cohere
 
