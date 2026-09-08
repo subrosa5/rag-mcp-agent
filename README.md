@@ -147,9 +147,11 @@ rag-agent/
 │   ├── memory.py                  # обрезка истории диалога под контекстное окно
 │   ├── orchestrator.py             # пайплайн: guardrail → rewriter → agent(+history) → critic
 │   ├── eval.py                     # retrieval hit rate + faithfulness (LLM-judge)
-│   └── api.py                       # FastAPI: /agent/ask (с критиком), /agent/ask-raw, /rag/ask
+│   ├── api.py                       # FastAPI: /agent/ask (с критиком), /agent/ask-raw, /rag/ask
+│   └── mcp_server.py                 # тот же агент как MCP-сервер (stdio)
 ├── requirements.txt         # база, без torch (то, что ставится на Render)
-└── requirements-local.txt    # + sentence-transformers, для self-hosted режима
+├── requirements-local.txt    # + sentence-transformers, для self-hosted режима
+└── requirements-mcp.txt       # + mcp SDK, для запуска mcp_server.py
 ```
 
 ## Локальный запуск
@@ -168,6 +170,22 @@ python -m src.eval                # eval-метрики
 
 uvicorn src.api:app --reload      # HTTP API
 ```
+
+## MCP-сервер
+
+Тот же агент доступен не только по HTTP, но и как [MCP](https://modelcontextprotocol.io)-сервер —
+`src/mcp_server.py` тонкой обвязкой выставляет `ask_agent`, `ask_agent_fast`,
+`search_documents` и `rag_answer` как MCP tools, дёргая ровно те же функции,
+что и `api.py` (никакой отдельной логики, два транспорта поверх одного движка).
+
+```bash
+pip install -r requirements-mcp.txt
+claude mcp add --transport stdio rag-agent -- python -m src.mcp_server
+```
+
+После этого любой MCP-клиент (Claude Code, Claude Desktop, Cursor) может
+спрашивать базу знаний этого проекта напрямую, тем же самым пайплайном
+(guardrail → query rewriter → main agent → critic), что работает на проде.
 
 ## Деплой
 
