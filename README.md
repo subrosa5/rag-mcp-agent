@@ -1,4 +1,4 @@
-# rag-agent
+# rag-mcp-agent
 
 RAG + tool-use агент, реализованный без фреймворков (без LangChain/LlamaIndex) —
 hybrid retrieval, реранкинг, tool-calling цикл и eval-харнес написаны напрямую
