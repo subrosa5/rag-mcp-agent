@@ -34,6 +34,7 @@ from .critic import critique
 from .guardrail import check as guardrail_check
 from .memory import trim_history
 from .query_rewriter import rewrite as rewrite_query
+from .tracing import reset as reset_tracing
 
 
 def run_agent_with_review(
@@ -42,6 +43,7 @@ def run_agent_with_review(
     max_revisions: int = 1,
     verbose: bool = True,
 ) -> str:
+    reset_tracing()  # новый запрос — новая статистика cost/latency (см. tracing.py)
     history = trim_history(history or [])  # см. memory.py — иначе контекст растёт бесконечно
 
     allowed, reason = guardrail_check(question)
@@ -56,19 +58,28 @@ def run_agent_with_review(
 
     result = run_agent_verbose(clean_question, history=history, verbose=verbose)
 
-    for _ in range(max_revisions):
+    # Раньше здесь был баг: после REVISE агент перезапускался, но новый,
+    # исправленный ответ уходил пользователю БЕЗ повторной проверки —
+    # критик проверял только первый черновик, а не тот, что реально
+    # отправляется. Теперь критик проверяет КАЖДУЮ версию ответа, включая
+    # финальную после ревизии — цикл продолжается, пока либо критик не
+    # скажет OK, либо не кончатся попытки.
+    revisions_left = max_revisions
+    while True:
         ok, crit_reason = critique(question, result["answer"], result["trace"])
         if verbose:
             print(f"  [критик] {'OK' if ok else 'REVISE (' + crit_reason + ')'}")
-        if ok:
-            return result["answer"]
+        if ok or revisions_left <= 0:
+            break
         # передаём замечание критика обратно агенту как инструкцию на доработку
         result = run_agent_verbose(
             clean_question, history=history, extra_instruction=crit_reason, verbose=verbose
         )
+        revisions_left -= 1
 
     # после max_revisions критик не блокирует ответ навсегда — лучше вернуть
-    # неидеальный ответ, чем зависнуть в бесконечных проверках
+    # неидеальный, но честно перепроверенный ответ, чем зависнуть в бесконечных
+    # проверках. Но теперь это "неидеальный и мы это знаем", а не "не проверяли вовсе".
     return result["answer"]
 
 

@@ -16,29 +16,35 @@ orchestrator.py, rag.py, retrieval.py) используется как есть,
 from mcp.server.mcpserver import MCPServer
 
 from .agent import run_agent
+from .finance import get_stock_quote as fetch_stock_quote
 from .orchestrator import run_agent_with_review
 from .rag import answer as compute_rag_answer
 from .retrieval import hybrid_retrieve
+from .tracing import get_stats
 
-mcp = MCPServer("rag-agent")
+mcp = MCPServer("rag-mcp-agent")
 
 
 @mcp.tool()
-def ask_agent(question: str) -> str:
+def ask_agent(question: str) -> dict:
     """Задать вопрос базе знаний через полный multi-agent пайплайн
     (guardrail → query rewriter → main agent с tool-calling → critic).
     Медленнее и дороже, чем ask_agent_fast, зато critic проверяет
     обоснованность ответа перед тем, как его вернуть. Используй по
-    умолчанию — это тот же путь, что и продакшн-эндпоинт /agent/ask."""
-    return run_agent_with_review(question, verbose=False)
+    умолчанию — это тот же путь, что и продакшн-эндпоинт /agent/ask.
+    Возвращает ответ вместе со stats (латентность/токены/стоимость каждого
+    из четырёх агентов, см. tracing.py) — для контроля cost/latency."""
+    answer = run_agent_with_review(question, verbose=False)
+    return {"answer": answer, "stats": get_stats()}
 
 
 @mcp.tool()
-def ask_agent_fast(question: str) -> str:
+def ask_agent_fast(question: str) -> dict:
     """То же самое, но без critic-агента — один проход main-агента вместо
     двух-трёх вызовов LLM. Используй, когда важна скорость/стоимость, а не
-    максимальная обоснованность ответа."""
-    return run_agent(question, verbose=False)
+    максимальная обоснованность ответа. Тоже возвращает stats."""
+    answer = run_agent(question, verbose=False)
+    return {"answer": answer, "stats": get_stats()}
 
 
 @mcp.tool()
@@ -54,8 +60,18 @@ def search_documents(question: str, k: int = 4) -> list[dict]:
 def rag_answer(question: str) -> dict:
     """Фиксированный RAG-пайплайн без агентного принятия решений (всегда
     ищет по документам и отвечает) — для сравнения с ask_agent, который
-    сам решает, нужен ли вообще поиск."""
+    сам решает, нужен ли вообще поиск. Уже включает stats (rag.py сам
+    прикладывает их к ответу)."""
     return compute_rag_answer(question)
+
+
+@mcp.tool()
+def get_stock_quote(ticker: str) -> dict:
+    """Текущая цена акции по биржевому тикеру (например AAPL, TSLA) —
+    live-данные с Yahoo Finance, без API-ключа. Тот же инструмент, что
+    main-агент может вызвать сам внутри ask_agent (см. tools.py); здесь
+    доступен и напрямую, в обход агентного цикла."""
+    return fetch_stock_quote(ticker)
 
 
 if __name__ == "__main__":

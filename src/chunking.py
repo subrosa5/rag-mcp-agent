@@ -16,6 +16,15 @@ def chunk_text(text: str, size: int = None, overlap: int = None) -> list[str]:
     """
     size = size or config.CHUNK_SIZE
     overlap = overlap or config.CHUNK_OVERLAP
+    # Без этой проверки overlap >= size даёт шаг size - overlap <= 0 —
+    # start никогда не растёт (или уменьшается), и `while start < len(text)`
+    # зависает навсегда на непустом тексте. Раньше это можно было словить
+    # только руками, поменяв параметры по умолчанию в config.py.
+    if overlap >= size:
+        raise ValueError(f"overlap ({overlap}) должен быть меньше size ({size}) — иначе бесконечный цикл")
+    if size <= 0:
+        raise ValueError(f"size должен быть положительным, получено {size}")
+
     text = text.strip()
     if not text:
         return []

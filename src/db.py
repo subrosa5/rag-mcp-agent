@@ -83,6 +83,41 @@ def clear_chunks() -> None:
         conn.execute("TRUNCATE chunks RESTART IDENTITY")
 
 
+@contextmanager
+def transaction():
+    """Одно соединение, одна транзакция: либо всё внутри блока применяется
+    разом (commit), либо ничего (rollback при любом исключении). autocommit
+    здесь намеренно False — в отличие от get_conn()/_raw_conn(), где каждый
+    вызов сам по себе атомарен, но independent от соседних вызовов."""
+    conn = psycopg.connect(config.DATABASE_URL, autocommit=False)
+    register_vector(conn)
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def reindex(all_rows: list[tuple[str, int, str, "np.ndarray"]]) -> None:
+    """Полная переиндексация АТОМАРНО: TRUNCATE и все вставки — в одной
+    транзакции. Раньше clear_chunks() и insert_chunks() каждый открывали
+    свою автокоммитную транзакцию по отдельности (по одной на документ) —
+    сбой на середине переиндексации (или чужой запрос ровно в этот момент)
+    мог увидеть пустую или наполовину заполненную таблицу chunks."""
+    with transaction() as conn:
+        conn.execute("TRUNCATE chunks RESTART IDENTITY")
+        if all_rows:
+            with conn.cursor() as cur:
+                cur.executemany(
+                    """INSERT INTO chunks (source, chunk_index, content, embedding)
+                       VALUES (%s, %s, %s, %s)""",
+                    all_rows,
+                )
+
+
 def vector_search(query_embedding, k: int) -> list[dict]:
     """Поиск k ближайших чанков по косинусному расстоянию.
 

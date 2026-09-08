@@ -80,7 +80,15 @@ def run_eval():
         retrieved_sources = {c["source"] for c in chunks}
 
         if item["expected_source"] is None:
-            retrieval_hit = len(chunks) == 0 or True  # для ловушки retrieval не судим строго
+            # Было: `len(chunks) == 0 or True` — это выражение ВСЕГДА True
+            # независимо от того, что реально нашёл retrieval (классический
+            # баг: "or True" убивает всю проверку слева). Заявленные 100%
+            # retrieval hit rate ничего не доказывали.
+            # Честная замена: для ловушки у retrieval нет "правильного"
+            # источника по определению — тут показательна не эта метрика,
+            # а faithfulness (сказала ли модель честно "не знаю"). Помечаем
+            # retrieval_hit как N/A и не тянем его в общее среднее ниже.
+            retrieval_hit = None
         else:
             retrieval_hit = item["expected_source"] in retrieved_sources
 
@@ -95,11 +103,14 @@ def run_eval():
             "answer": result["answer"][:200],
         })
 
-    hit_rate = sum(r["retrieval_hit"] for r in results) / len(results)
+    # retrieval_hit может быть None (ловушка без "правильного" источника) —
+    # такие записи не участвуют в среднем, иначе N/A молча считался бы как 0 или 1.
+    scored_hits = [r["retrieval_hit"] for r in results if r["retrieval_hit"] is not None]
+    hit_rate = sum(scored_hits) / len(scored_hits) if scored_hits else float("nan")
     faithfulness_rate = sum(r["faithful"] for r in results) / len(results)
 
     print(json.dumps(results, ensure_ascii=False, indent=2))
-    print(f"\nretrieval hit rate:  {hit_rate:.0%}")
+    print(f"\nretrieval hit rate:  {hit_rate:.0%}  (n={len(scored_hits)}, исключая ловушки без источника)")
     print(f"faithfulness rate:   {faithfulness_rate:.0%}")
 
 

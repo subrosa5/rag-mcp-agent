@@ -8,6 +8,7 @@
 from groq import Groq
 
 from . import config
+from .tracing import traced_completion
 
 _client = None
 
@@ -51,7 +52,8 @@ def critique(question: str, answer: str, trace: list[dict]) -> tuple[bool, str]:
         f"Черновик ответа агента: {answer}\n\n"
         f"Вердикт:"
     )
-    resp = _get_client().chat.completions.create(
+    resp = traced_completion(
+        _get_client(), "critic",
         model=config.LLM_MODEL,
         messages=[
             {"role": "system", "content": CRITIC_SYSTEM_PROMPT},

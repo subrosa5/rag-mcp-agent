@@ -7,6 +7,7 @@ from groq import Groq
 
 from . import config
 from .retrieval import hybrid_retrieve
+from .tracing import get_stats, reset, traced_completion
 
 _client = None
 
@@ -36,14 +37,16 @@ def format_context(chunks: list[dict]) -> str:
 
 
 def answer(question: str, k: int = None) -> dict:
+    reset()  # отдельный entry point (не через orchestrator.py) — своя статистика с нуля
     chunks = hybrid_retrieve(question)
     if not chunks:
-        return {"answer": "В базе документов пока ничего нет.", "sources": []}
+        return {"answer": "В базе документов пока ничего нет.", "sources": [], "stats": get_stats()}
 
     context = format_context(chunks)
     prompt = f"Контекст:\n{context}\n\nВопрос: {question}\nОтвет:"
 
-    resp = _get_client().chat.completions.create(
+    resp = traced_completion(
+        _get_client(), "rag",
         model=config.LLM_MODEL,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -53,6 +56,7 @@ def answer(question: str, k: int = None) -> dict:
     return {
         "answer": resp.choices[0].message.content,
         "sources": [{"source": c["source"], "score": round(c["rerank_score"], 3)} for c in chunks],
+        "stats": get_stats(),
     }
 
 

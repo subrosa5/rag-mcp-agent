@@ -15,6 +15,7 @@
 from groq import Groq
 
 from . import config
+from .tracing import traced_completion
 
 _client = None
 
@@ -48,7 +49,8 @@ def rewrite(question: str, history: list[dict] = None) -> str:
         recent = "\n".join(f"{m['role']}: {m['content']}" for m in history[-4:])
         prompt = f"Предыдущий контекст разговора:\n{recent}\n\nВопрос: {question}"
 
-    resp = _get_client().chat.completions.create(
+    resp = traced_completion(
+        _get_client(), "query_rewriter",
         model=config.LLM_MODEL,
         messages=[
             {"role": "system", "content": REWRITER_SYSTEM_PROMPT},

@@ -17,6 +17,7 @@
 from groq import Groq
 
 from . import config
+from .tracing import traced_completion
 
 _client = None
 
@@ -44,7 +45,8 @@ GUARDRAIL_SYSTEM_PROMPT = (
 
 def check(question: str) -> tuple[bool, str]:
     """Возвращает (allowed, причина). allowed=True — вопрос можно передавать дальше."""
-    resp = _get_client().chat.completions.create(
+    resp = traced_completion(
+        _get_client(), "guardrail",
         model=config.LLM_MODEL,
         messages=[
             {"role": "system", "content": GUARDRAIL_SYSTEM_PROMPT},
