@@ -1,8 +1,0 @@
-# Для запуска MCP-сервера (src/mcp_server.py) поверх агента.
-# Отдельным файлом по той же причине, что и requirements-local.txt —
-# MCP-транспорт не нужен на Render (там работает только HTTP api.py).
-#
-# Установка: pip install -r requirements-mcp.txt   (уже включает requirements.txt)
--r requirements.txt
-
-mcp>=1.2

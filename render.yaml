@@ -4,14 +4,14 @@
 #
 # USE_COHERE=true здесь не случайно: сервис на free/starter tier (512MB RAM)
 # не выдержит self-hosted sentence-transformers (~1.3GB на обе модели) —
-# см. комментарий в src/config.py. Локально по умолчанию USE_COHERE=false.
+# см. комментарий в src/rag_agent/config.py и extra `local` в pyproject.toml. Локально по умолчанию USE_COHERE=false.
 services:
   - type: web
     name: rag-agent-api
     runtime: python
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn src.api:app --host 0.0.0.0 --port $PORT
+    buildCommand: pip install .
+    startCommand: uvicorn rag_agent.api.app:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
@@ -25,4 +25,7 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: ALLOWED_ORIGIN
+        sync: false
+      # тот же секрет задаётся во фронте как BACKEND_API_KEY (web/app/api/ask/route.ts)
+      - key: API_KEY
         sync: false

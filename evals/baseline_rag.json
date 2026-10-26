@@ -1,0 +1,60 @@
+{
+  "hit_at_k": 0.982,
+  "recall_at_k": 0.982,
+  "mrr": 0.97,
+  "key_fact_recall": 0.918,
+  "faithfulness": 0.937,
+  "correctness": 0.913,
+  "latency_p50_ms": 777.1,
+  "latency_p95_ms": 1243.6,
+  "cost_per_query_usd": 0.000155,
+  "llm_calls_per_query": 1.0,
+  "n": 63,
+  "by_category": {
+    "colloquial": {
+      "hit_at_k": 0.833,
+      "recall_at_k": 0.833,
+      "mrr": 0.833,
+      "key_fact_recall": 0.833,
+      "faithfulness": 1.0,
+      "correctness": 0.833,
+      "n": 6
+    },
+    "exact_token": {
+      "hit_at_k": 1.0,
+      "recall_at_k": 1.0,
+      "mrr": 1.0,
+      "key_fact_recall": 1.0,
+      "faithfulness": 1.0,
+      "correctness": 0.875,
+      "n": 8
+    },
+    "multi_hop": {
+      "hit_at_k": 1.0,
+      "recall_at_k": 1.0,
+      "mrr": 1.0,
+      "key_fact_recall": 0.9,
+      "faithfulness": 0.9,
+      "correctness": 0.95,
+      "n": 10
+    },
+    "single_hop": {
+      "hit_at_k": 1.0,
+      "recall_at_k": 1.0,
+      "mrr": 0.978,
+      "key_fact_recall": 0.919,
+      "faithfulness": 0.935,
+      "correctness": 0.935,
+      "n": 31
+    },
+    "unanswerable": {
+      "hit_at_k": null,
+      "recall_at_k": null,
+      "mrr": null,
+      "key_fact_recall": null,
+      "faithfulness": 0.875,
+      "correctness": 0.875,
+      "n": 8
+    }
+  }
+}

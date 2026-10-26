@@ -1,0 +1,10 @@
+{
+  "rag": {
+    "hit_at_k": 0.93,
+    "recall_at_k": 0.93,
+    "mrr": 0.9,
+    "key_fact_recall": 0.85,
+    "faithfulness": 0.88,
+    "correctness": 0.85
+  }
+}

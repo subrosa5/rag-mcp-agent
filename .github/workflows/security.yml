@@ -1,0 +1,55 @@
+name: security
+
+# Автоматическая часть пентеста (этап 3, security/threat-model.md §6):
+# SAST, уязвимые зависимости, секреты. Раз в неделю — даже без изменений в
+# коде, потому что новые CVE появляются в уже закреплённых зависимостях.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  sast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --extra mcp --group dev --locked
+      - name: bandit
+        run: uv run bandit -c pyproject.toml -r src evals
+      - name: semgrep
+        run: >-
+          uvx --from semgrep semgrep scan --metrics=off --error
+          --config p/python --config p/fastapi --config p/typescript --config p/secrets
+          src evals web/app
+
+  dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: pip-audit (по uv.lock, все extras)
+        run: |
+          uv export --all-extras --no-hashes --format requirements-txt > /tmp/req.txt
+          uvx pip-audit -r /tmp/req.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: npm audit
+        working-directory: web
+        run: npm audit --omit=dev --audit-level=high
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # вся история: секрет, удалённый из HEAD, всё равно лежит в старом коммите
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

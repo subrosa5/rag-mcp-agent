@@ -1,0 +1,62 @@
+name: evals
+
+# Регрессионный гейт качества: PR, который меняет поиск, промпты, модели или
+# корпус, не мёржится, если метрики упали ниже evals/thresholds.json.
+# Конфигурация как в локальном baseline: self-hosted эмбеддинги (extra `local`,
+# CPU torch), Groq для генерации и судьи. Нужен секрет GROQ_API_KEY.
+on:
+  pull_request:
+    paths: ["src/**", "evals/**", "data/**", "pyproject.toml", "uv.lock"]
+  schedule:
+    - cron: "0 3 * * *"   # ночью — полный пайплайн с агентами (дороже и дольше)
+  workflow_dispatch:
+    inputs:
+      pipeline:
+        type: choice
+        options: [rag, agent, full]
+        default: rag
+
+permissions:
+  contents: read
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: rag_agent
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/rag_agent
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      USE_COHERE: "false"
+      PIPELINE: ${{ github.event_name == 'schedule' && 'full' || inputs.pipeline || 'rag' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: skip without secret (PR из форка)
+        if: env.GROQ_API_KEY == ''
+        run: echo "::warning::GROQ_API_KEY не задан — evals пропущены" && exit 0
+      - uses: astral-sh/setup-uv@v6
+        if: env.GROQ_API_KEY != ''
+      - uses: actions/cache@v4
+        if: env.GROQ_API_KEY != ''
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ hashFiles('src/rag_agent/config.py') }}
+      - if: env.GROQ_API_KEY != ''
+        run: uv sync --extra local --locked
+      - if: env.GROQ_API_KEY != ''
+        run: uv run python -m rag_agent.ingestion
+      - if: env.GROQ_API_KEY != ''
+        run: uv run python -m evals.run --pipeline "$PIPELINE" --gate
+      - uses: actions/upload-artifact@v4
+        if: always() && env.GROQ_API_KEY != ''
+        with:
+          name: eval-report-${{ env.PIPELINE }}
+          path: evals/reports/
