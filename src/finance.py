@@ -13,7 +13,10 @@ Twelve Data) — это тот же trade-off, что уже есть в про�
 Cohere эмбеддингами (config.py): бесплатно-и-неформально vs
 платно-но-надёжно.
 """
+
 import json
+import math
+import re
 import urllib.error
 import urllib.request
 
@@ -25,6 +28,8 @@ def get_stock_quote(ticker: str) -> dict:
     TSLA, MSFT). Возвращает {"error": ...}, если тикер не найден или Yahoo
     недоступен — агент должен уметь честно сказать "не смог получить
     котировку", а не выдумать число."""
+    if not isinstance(ticker, str) or not re.fullmatch(r"[A-Za-z0-9.^=-]{1,16}", ticker.strip()):
+        return {"error": "Invalid ticker"}
     ticker = ticker.strip().upper()
     req = urllib.request.Request(
         _QUOTE_URL.format(ticker=ticker),
@@ -33,14 +38,18 @@ def get_stock_quote(ticker: str) -> dict:
     try:
         with urllib.request.urlopen(req, timeout=8) as resp:
             data = json.loads(resp.read())
-    except (urllib.error.URLError, TimeoutError) as e:
-        return {"error": f"Не удалось получить котировку {ticker}: {e}"}
+    except (urllib.error.URLError, TimeoutError, ValueError):
+        return {"error": f"Не удалось получить котировку {ticker}"}
 
     try:
         result = data["chart"]["result"][0]
         meta = result["meta"]
         price = meta["regularMarketPrice"]
         prev_close = meta["chartPreviousClose"]
+        if not all(isinstance(x, (int, float)) and math.isfinite(x) for x in (price, prev_close)):
+            return {"error": "Invalid price"}
+        if not isinstance(meta.get("regularMarketTime"), int):
+            return {"error": "Quote timestamp missing"}
         change = price - prev_close
         change_pct = (change / prev_close * 100) if prev_close else 0.0
         return {

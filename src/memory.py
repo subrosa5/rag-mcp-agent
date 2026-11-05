@@ -1,22 +1,23 @@
-"""memory.py — обрезка истории диалога под контекстное окно.
+"""History is untrusted context, bounded equally for CLI, HTTP and MCP callers."""
 
-Зачем это вообще нужно: контекстное окно модели не бесконечное, а история
-диалога растёт с каждым сообщением. Без ограничения длинный чат рано или
-поздно либо не влезет в модель целиком, либо будет становиться дороже с
-каждым новым вопросом — платишь за токены ВСЕЙ истории на каждый запрос,
-а не только за новый вопрос.
-
-Здесь — самая простая рабочая стратегия: держим только последние N
-сообщений (hard truncation). Она честно теряет старый контекст безвозвратно —
-более продвинутый вариант "в проде" — суммаризация старых сообщений в
-короткий конспект вместо полного отбрасывания (см. roadmap в README).
-Простая обрезка — осознанный выбор для этого масштаба, не недосмотр.
-"""
-
-MAX_HISTORY_MESSAGES = 10  # 5 пар вопрос-ответ — достаточно для демо, дальше context growing
+MAX_HISTORY_MESSAGES = 10
+MAX_HISTORY_CHARS = 16000
 
 
 def trim_history(history: list[dict]) -> list[dict]:
-    if len(history) <= MAX_HISTORY_MESSAGES:
-        return history
-    return history[-MAX_HISTORY_MESSAGES:]
+    if not isinstance(history, list) or len(history) > 50:
+        raise ValueError("Invalid history")
+    result, remaining = [], MAX_HISTORY_CHARS
+    for item in reversed(history):
+        if not isinstance(item, dict) or item.get("role") not in ("user", "assistant"):
+            raise ValueError("History role must be user or assistant")
+        content = item.get("content")
+        if not isinstance(content, str) or len(content) > 8000:
+            raise ValueError("Invalid history content")
+        if len(result) < MAX_HISTORY_MESSAGES and len(content) <= remaining:
+            result.append({"role": item["role"], "content": content})
+            remaining -= len(content)
+        else:
+            # Still validate all roles, but don't skip into older context.
+            remaining = -1
+    return list(reversed(result))

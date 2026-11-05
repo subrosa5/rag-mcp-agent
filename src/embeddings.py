@@ -5,19 +5,19 @@
 к Cohere — это и есть смысл вынести бэкенд за интерфейс. Какой бэкенд
 активен, решает config.USE_COHERE (env-переменная), объяснение выбора — там.
 """
+
 from functools import lru_cache
 
 import numpy as np
 
 from . import config
 
-
 if config.USE_COHERE:
     import cohere
 
     @lru_cache(maxsize=1)
     def _client() -> "cohere.ClientV2":
-        return cohere.ClientV2(api_key=config.COHERE_API_KEY)
+        return cohere.ClientV2(api_key=config.COHERE_API_KEY, timeout=20, max_retries=1)
 
     def embed(texts: list[str], input_type: str = "search_document"):
         """input_type различает "это чанк документа для индекса" и "это вопрос
@@ -25,21 +25,29 @@ if config.USE_COHERE:
         это часть их API. У локальной bi-encoder модели такого разделения нет —
         вопрос и документ эмбеддятся одинаково, поэтому параметр там просто
         игнорируется (см. ветку else ниже)."""
-        resp = _client().embed(
-            texts=texts,
-            model=config.EMBEDDING_MODEL,
-            input_type=input_type,
-            embedding_types=["float"],
+        batches = []
+        for offset in range(0, len(texts), 96):
+            batch = texts[offset : offset + 96]
+            resp = _client().embed(
+                texts=batch,
+                model=config.EMBEDDING_MODEL,
+                input_type=input_type,
+                embedding_types=["float"],
+            )
+            vectors = np.asarray(resp.embeddings.float_, dtype=np.float32)
+            if (
+                vectors.shape != (len(batch), config.EMBEDDING_DIM)
+                or not np.isfinite(vectors).all()
+            ):
+                raise ValueError("Embedding provider returned invalid dimensions or values")
+            batches.append(vectors)
+        return (
+            np.concatenate(batches)
+            if batches
+            else np.empty((0, config.EMBEDDING_DIM), dtype=np.float32)
         )
-        # Cohere отдаёт обычные python list[float], а не numpy-массив. pgvector'овский
-        # register_vector умеет сериализовать в тип `vector` только numpy.ndarray —
-        # с обычным списком psycopg молча сериализует его как Postgres double
-        # precision[], и запрос падает ("vector <=> double precision[]").
-        # Поймано на реальном Neon, локально не проявлялось (local-бэкенд и так
-        # возвращает ndarray из sentence-transformers).
-        return np.array(resp.embeddings.float_)
 
-    def rerank(question: str, candidates: list[dict], top_k: int = None) -> list[dict]:
+    def rerank(question: str, candidates: list[dict], top_k: int | None = None) -> list[dict]:
         top_k = top_k or config.RERANK_TOP_K
         if not candidates:
             return []
@@ -58,14 +66,17 @@ if config.USE_COHERE:
         return out
 
 else:
-    from sentence_transformers import SentenceTransformer, CrossEncoder
 
     @lru_cache(maxsize=1)
-    def _embedder() -> SentenceTransformer:
+    def _embedder():
+        from sentence_transformers import SentenceTransformer
+
         return SentenceTransformer(config.EMBEDDING_MODEL)
 
     @lru_cache(maxsize=1)
-    def _reranker() -> CrossEncoder:
+    def _reranker():
+        from sentence_transformers import CrossEncoder
+
         return CrossEncoder(config.RERANKER_MODEL)
 
     def embed(texts: list[str], input_type: str = "search_document"):
@@ -74,7 +85,7 @@ else:
         # понимать, откуда нормализация вообще берётся.
         return _embedder().encode(texts, normalize_embeddings=True)
 
-    def rerank(question: str, candidates: list[dict], top_k: int = None) -> list[dict]:
+    def rerank(question: str, candidates: list[dict], top_k: int | None = None) -> list[dict]:
         top_k = top_k or config.RERANK_TOP_K
         if not candidates:
             return []

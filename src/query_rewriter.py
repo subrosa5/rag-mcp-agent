@@ -12,6 +12,7 @@
 или опасна (например, арифметику) — иначе он может незаметно сломать
 намерение вопроса ещё до того, как его увидит основной агент.
 """
+
 from groq import Groq
 
 from . import config
@@ -23,7 +24,7 @@ _client = None
 def _get_client() -> Groq:
     global _client
     if _client is None:
-        _client = Groq(api_key=config.GROQ_API_KEY)
+        _client = Groq(api_key=config.GROQ_API_KEY, timeout=config.LLM_TIMEOUT, max_retries=1)
     return _client
 
 
@@ -39,7 +40,7 @@ REWRITER_SYSTEM_PROMPT = (
 )
 
 
-def rewrite(question: str, history: list[dict] = None) -> str:
+def rewrite(question: str, history: list[dict] | None = None) -> str:
     """history нужна для разрешения ссылок на предыдущие сообщения — без
     неё "а сколько там было?" непонятно, о чём вопрос вообще. Берём только
     последние несколько сообщений: для переформулировки текущего вопроса
@@ -50,7 +51,8 @@ def rewrite(question: str, history: list[dict] = None) -> str:
         prompt = f"Предыдущий контекст разговора:\n{recent}\n\nВопрос: {question}"
 
     resp = traced_completion(
-        _get_client(), "query_rewriter",
+        _get_client(),
+        "query_rewriter",
         model=config.LLM_MODEL,
         messages=[
             {"role": "system", "content": REWRITER_SYSTEM_PROMPT},
@@ -58,4 +60,4 @@ def rewrite(question: str, history: list[dict] = None) -> str:
         ],
         temperature=0,
     )
-    return resp.choices[0].message.content.strip()
+    return (resp.choices[0].message.content or "").strip()

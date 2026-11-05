@@ -14,6 +14,7 @@
 Чего НЕ делает: не проверяет фактическую точность (это critic.py) и не
 решает, какой инструмент вызвать (это agent.py).
 """
+
 from groq import Groq
 
 from . import config
@@ -25,7 +26,7 @@ _client = None
 def _get_client() -> Groq:
     global _client
     if _client is None:
-        _client = Groq(api_key=config.GROQ_API_KEY)
+        _client = Groq(api_key=config.GROQ_API_KEY, timeout=config.LLM_TIMEOUT, max_retries=1)
     return _client
 
 
@@ -46,7 +47,8 @@ GUARDRAIL_SYSTEM_PROMPT = (
 def check(question: str) -> tuple[bool, str]:
     """Возвращает (allowed, причина). allowed=True — вопрос можно передавать дальше."""
     resp = traced_completion(
-        _get_client(), "guardrail",
+        _get_client(),
+        "guardrail",
         model=config.LLM_MODEL,
         messages=[
             {"role": "system", "content": GUARDRAIL_SYSTEM_PROMPT},
@@ -54,8 +56,8 @@ def check(question: str) -> tuple[bool, str]:
         ],
         temperature=0,  # предсказуемость важнее креативности для security-проверки
     )
-    verdict = resp.choices[0].message.content.strip()
-    if verdict.upper().startswith("ALLOW"):
+    verdict = (resp.choices[0].message.content or "").strip()
+    if verdict.upper() == "ALLOW":
         return True, ""
     # срезаем префикс "BLOCK:" — он у нас уже есть в формате лога вызывающего кода,
     # дублировать его в самой причине не нужно (иначе получится "BLOCK: BLOCK: ...")

@@ -22,12 +22,16 @@ openai/gpt-oss-20b) — для реального прода их надо тя�
 billng API, а не хардкодить. Это демонстрация механизма трекинга, не
 биллинговая система.
 """
+
+import os
 import time
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass
 
-PRICE_PER_1M_INPUT_USD = 0.10
-PRICE_PER_1M_OUTPUT_USD = 0.50
+from . import config
+
+PRICE_PER_1M_INPUT_USD = float(os.environ.get("LLM_INPUT_USD_PER_MILLION", "0.075"))
+PRICE_PER_1M_OUTPUT_USD = float(os.environ.get("LLM_OUTPUT_USD_PER_MILLION", "0.30"))
 
 
 @dataclass
@@ -61,6 +65,7 @@ def traced_completion(client, agent: str, **kwargs):
         _calls.set(calls)
 
     t0 = time.perf_counter()
+    kwargs.setdefault("max_completion_tokens", config.MAX_COMPLETION_TOKENS)
     resp = client.chat.completions.create(**kwargs)
     latency_ms = (time.perf_counter() - t0) * 1000
 
@@ -72,14 +77,16 @@ def traced_completion(client, agent: str, **kwargs):
         + completion_tokens / 1_000_000 * PRICE_PER_1M_OUTPUT_USD
     )
 
-    calls.append(CallRecord(
-        agent=agent,
-        model=kwargs.get("model", ""),
-        latency_ms=round(latency_ms, 1),
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
-        cost_usd=round(cost, 6),
-    ))
+    calls.append(
+        CallRecord(
+            agent=agent,
+            model=kwargs.get("model", ""),
+            latency_ms=round(latency_ms, 1),
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cost_usd=round(cost, 6),
+        )
+    )
     return resp
 
 
@@ -88,6 +95,7 @@ def get_stats() -> dict:
     агентов дёрнули Groq, сколько это заняло по времени и в деньгах."""
     calls = _calls.get() or []
     return {
+        "cost_scope": "estimated LLM only; excludes embeddings/reranking; configure prices when changing models",
         "calls": [asdict(c) for c in calls],
         "total_llm_calls": len(calls),
         "total_latency_ms": round(sum(c.latency_ms for c in calls), 1),

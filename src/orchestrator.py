@@ -1,88 +1,60 @@
-"""orchestrator.py — собирает четырёх независимых агентов в один пайплайн.
+"""One public answer pipeline; rejected or failed reviews never release a draft."""
 
-    вопрос
-      │
-      ▼
-   Guardrail Agent ──BLOCK──▶ вежливый отказ, дальше не идём (экономим вызовы)
-      │ ALLOW
-      ▼
-   Query Rewriter Agent  (сырой вопрос → чистая формулировка)
-      │
-      ▼
-   Main Agent (agent.py) — решает сам: search_documents / calculate / оба
-      │
-      ▼
-   Critic Agent ──REVISE──▶ Main Agent пробует снова (максимум 1 раз)
-      │ OK
-      ▼
-   ответ пользователю
+import logging
 
-Четыре роли, у каждой свой периметр ответственности — это то, что делает
-это НАСТОЯЩИМ multi-agent, а не косметикой:
-  Guardrail       — безопасность на входе (защита от prompt injection)
-  Query Rewriter  — качество поискового запроса (реальный RAG-приём)
-  Main Agent      — выполнение задачи через инструменты
-  Critic          — обоснованность ответа на выходе
-
-Честная цена: до 5 вызовов LLM на один вопрос в худшем случае (guardrail +
-rewriter + agent + critic + 1 повтор agent'а). Для игрушечного демо это
-избыточно; для системы, которая не должна врать и не должна вестись на
-инъекции, — осознанный и оправданный trade-off.
-"""
 from .agent import run_agent_verbose
 from .critic import critique
+from .grounding import abstain
 from .guardrail import check as guardrail_check
 from .memory import trim_history
 from .query_rewriter import rewrite as rewrite_query
-from .tracing import reset as reset_tracing
+from .tracing import get_stats, reset
+
+log = logging.getLogger(__name__)
+
+
+def answer_agent(
+    question: str, history: list[dict] | None = None, max_revisions: int = 1, verbose: bool = False
+) -> dict:
+    reset()
+    if not isinstance(question, str) or not question.strip() or len(question) > 4000:
+        raise ValueError("Question must contain 1–4000 non-blank characters")
+    if not 0 <= max_revisions <= 1:
+        raise ValueError("max_revisions must be 0 or 1")
+    history = trim_history(history or [])
+    result = abstain()
+    try:
+        allowed, _ = guardrail_check(question)
+        if not allowed:
+            return {**abstain("blocked"), "status": "blocked", "stats": get_stats()}
+        # Rewriting is a retrieval hint, never a replacement for the user's intent.
+        hint = rewrite_query(question, history=history)
+        feedback = None
+        for _ in range(max_revisions + 1):
+            result = run_agent_verbose(
+                question,
+                history=history,
+                search_hint=hint,
+                extra_instruction=feedback,
+                verbose=verbose,
+            )
+            if result["status"] != "answered":
+                break
+            ok, feedback = critique(question, result["answer"], result["trace"])
+            if ok:
+                break
+            result = {**abstain("review_rejected"), "evidence": result.get("evidence", [])}
+    except Exception:
+        log.warning("Answer pipeline unavailable")
+        result = {**abstain("dependency_unavailable"), "status": "unavailable"}
+    return {**result, "stats": get_stats()}
 
 
 def run_agent_with_review(
-    question: str,
-    history: list[dict] = None,
-    max_revisions: int = 1,
-    verbose: bool = True,
+    question: str, history: list[dict] | None = None, max_revisions: int = 1, verbose: bool = True
 ) -> str:
-    reset_tracing()  # новый запрос — новая статистика cost/latency (см. tracing.py)
-    history = trim_history(history or [])  # см. memory.py — иначе контекст растёт бесконечно
-
-    allowed, reason = guardrail_check(question)
-    if verbose:
-        print(f"  [guardrail] {'ALLOW' if allowed else 'BLOCK: ' + reason}")
-    if not allowed:
-        return "Извините, не могу обработать этот запрос."
-
-    clean_question = rewrite_query(question, history=history)
-    if verbose and clean_question != question:
-        print(f"  [rewriter] '{question}' → '{clean_question}'")
-
-    result = run_agent_verbose(clean_question, history=history, verbose=verbose)
-
-    # Раньше здесь был баг: после REVISE агент перезапускался, но новый,
-    # исправленный ответ уходил пользователю БЕЗ повторной проверки —
-    # критик проверял только первый черновик, а не тот, что реально
-    # отправляется. Теперь критик проверяет КАЖДУЮ версию ответа, включая
-    # финальную после ревизии — цикл продолжается, пока либо критик не
-    # скажет OK, либо не кончатся попытки.
-    revisions_left = max_revisions
-    while True:
-        ok, crit_reason = critique(question, result["answer"], result["trace"])
-        if verbose:
-            print(f"  [критик] {'OK' if ok else 'REVISE (' + crit_reason + ')'}")
-        if ok or revisions_left <= 0:
-            break
-        # передаём замечание критика обратно агенту как инструкцию на доработку
-        result = run_agent_verbose(
-            clean_question, history=history, extra_instruction=crit_reason, verbose=verbose
-        )
-        revisions_left -= 1
-
-    # после max_revisions критик не блокирует ответ навсегда — лучше вернуть
-    # неидеальный, но честно перепроверенный ответ, чем зависнуть в бесконечных
-    # проверках. Но теперь это "неидеальный и мы это знаем", а не "не проверяли вовсе".
-    return result["answer"]
+    return answer_agent(question, history, max_revisions, verbose)["answer"]
 
 
 if __name__ == "__main__":
-    q = input("Вопрос: ")
-    print("\n" + run_agent_with_review(q))
+    print(run_agent_with_review(input("Вопрос: ")))
