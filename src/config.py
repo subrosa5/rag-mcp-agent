@@ -15,7 +15,8 @@ load_dotenv()  # читает .env в корне проекта, если он �
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 LLM_MODEL = os.environ.get("LLM_MODEL", "openai/gpt-oss-20b")
 CRITIC_MODEL = os.environ.get("CRITIC_MODEL", LLM_MODEL)
-LLM_TIMEOUT = float(os.environ.get("LLM_TIMEOUT", "20"))
+LLM_TIMEOUT = float(os.environ.get("LLM_TIMEOUT", "30"))
+REASONING_EFFORT = os.environ.get("REASONING_EFFORT", "low")
 MAX_COMPLETION_TOKENS = int(os.environ.get("MAX_COMPLETION_TOKENS", "2048"))
 
 # --- эмбеддинги и реранкинг: два бэкенда за одним интерфейсом (src/embeddings.py) ---

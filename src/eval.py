@@ -6,6 +6,7 @@ Provider calls cost money. No live score is claimed by offline regression tests.
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from groq import Groq
@@ -64,7 +65,7 @@ def run_eval(output: str = "eval-results.json"):
     dataset = json.loads((Path(__file__).parents[1] / "evals/golden.json").read_text())
     client = Groq(api_key=config.GROQ_API_KEY, timeout=config.LLM_TIMEOUT, max_retries=1)
     results = []
-    for case in dataset:
+    for case_index, case in enumerate(dataset, 1):
         result = answer_agent(case["question"])
         faithful = False
         judge_error = False
@@ -91,6 +92,7 @@ def run_eval(output: str = "eval-results.json"):
             {
                 **case,
                 "status": result["status"],
+                "reason": result.get("reason"),
                 "answer": result["answer"],
                 "faithful": faithful,
                 "judge_error": judge_error,
@@ -99,6 +101,20 @@ def run_eval(output: str = "eval-results.json"):
                 "stats": result["stats"],
             }
         )
+        Path(output).write_text(
+            json.dumps({"complete": False, "results": results}, ensure_ascii=False, indent=2)
+        )
+        print(
+            f"[{case_index}/{len(dataset)}] {result['status']} success={success}",
+            file=sys.stderr,
+            flush=True,
+        )
+        if result.get("reason") == "rate_limited":
+            print(
+                f"Provider quota reached; checkpoint saved to {output}. Retry after {result.get('retry_after', 60)} seconds.",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
     report = {
         "summary": summarize(results),
         "results": results,

@@ -67,3 +67,33 @@ def test_abstention_discards_model_claims():
 def test_evidence_id_changes_with_content_or_source():
     assert evidence_item("a", "old")["id"] != evidence_item("a", "new")["id"]
     assert evidence_item("a", "same")["id"] != evidence_item("b", "same")["id"]
+
+
+def test_generation_retries_bad_quote_once(monkeypatch):
+    from unittest.mock import Mock
+
+    from src import grounding
+
+    generate = Mock(side_effect=[grounding.abstain("invalid_citation"), {"status": "answered"}])
+    monkeypatch.setattr(grounding, "_generate_once", generate)
+    assert grounding.generate(object(), "q", [ITEM])["status"] == "answered"
+    assert generate.call_count == 2
+
+
+def test_generation_never_releases_second_bad_quote(monkeypatch):
+    from unittest.mock import Mock
+
+    from src import grounding
+
+    generate = Mock(return_value=grounding.abstain("invalid_citation"))
+    monkeypatch.setattr(grounding, "_generate_once", generate)
+    assert grounding.generate(object(), "q", [ITEM])["status"] == "insufficient_evidence"
+    assert generate.call_count == 2
+
+
+def test_quote_formatting_is_resolved_to_actual_source_text():
+    data = draft()
+    data["claims"][0]["citations"][0]["quote"] = ITEM["content"].lower().replace(" ", "\n")
+    result = validate_draft(json.dumps(data), [ITEM])
+    assert result["status"] == "answered"
+    assert result["claims"][0]["citations"][0]["quote"] == ITEM["content"]

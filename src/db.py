@@ -26,10 +26,11 @@ def _raw_conn():
         config.DATABASE_URL,
         autocommit=True,
         connect_timeout=5,
-        options="-c statement_timeout=10000",
     )
     try:
-        yield conn
+        with conn.transaction():
+            conn.execute("SET LOCAL statement_timeout = '10s'")
+            yield conn
     finally:
         conn.close()
 
@@ -43,11 +44,12 @@ def get_conn():
         config.DATABASE_URL,
         autocommit=True,
         connect_timeout=5,
-        options="-c statement_timeout=10000",
     )
     try:
-        register_vector(conn)
-        yield conn
+        with conn.transaction():
+            conn.execute("SET LOCAL statement_timeout = '10s'")
+            register_vector(conn)
+            yield conn
     finally:
         conn.close()
 
@@ -122,9 +124,9 @@ def transaction():
         config.DATABASE_URL,
         autocommit=False,
         connect_timeout=5,
-        options="-c statement_timeout=10000",
     )
     try:
+        conn.execute("SET LOCAL statement_timeout = '10s'")
         register_vector(conn)
         yield conn
         conn.commit()

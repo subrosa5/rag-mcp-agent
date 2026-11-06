@@ -66,6 +66,8 @@ def traced_completion(client, agent: str, **kwargs):
 
     t0 = time.perf_counter()
     kwargs.setdefault("max_completion_tokens", config.MAX_COMPLETION_TOKENS)
+    if kwargs.get("model", "").startswith("openai/gpt-oss-"):
+        kwargs.setdefault("reasoning_effort", config.REASONING_EFFORT)
     resp = client.chat.completions.create(**kwargs)
     latency_ms = (time.perf_counter() - t0) * 1000
 

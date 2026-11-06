@@ -96,7 +96,11 @@ class AskResponse(BaseModel):
 
 def public_result(result: dict) -> dict:
     if result["status"] == "unavailable":
-        raise HTTPException(503, "Answer dependencies unavailable", headers={"Retry-After": "10"})
+        raise HTTPException(
+            503,
+            "Answer dependencies unavailable",
+            headers={"Retry-After": str(result.get("retry_after", 10))},
+        )
     # Do not expose raw tool traces or unused retrieved documents over HTTP.
     return AskResponse.model_validate(result).model_dump()
 

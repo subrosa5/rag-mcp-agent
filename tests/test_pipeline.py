@@ -103,3 +103,23 @@ def test_rag_uses_one_retrieval_snapshot(monkeypatch):
     result = rag.answer("q", k=8)
     retrieval.assert_called_once_with("q", k=8)
     assert result["evidence"] == [evidence_item("a", "fact")]
+
+
+def test_provider_quota_is_reported_without_exposing_exception(monkeypatch, pipeline):
+    import httpx
+    from groq import RateLimitError
+
+    response = httpx.Response(
+        429, headers={"retry-after": "42"}, request=httpx.Request("POST", "https://api.groq.com")
+    )
+    monkeypatch.setattr(
+        o,
+        "guardrail_check",
+        Mock(side_effect=RateLimitError("private diagnostic", response=response, body=None)),
+    )
+    result = o.answer_agent("q")
+    assert result["status"] == "unavailable"
+    assert result["reason"] == "rate_limited"
+    assert result["retry_after"] == 42
+    assert "private diagnostic" not in str(result)
+    pipeline.assert_not_called()
