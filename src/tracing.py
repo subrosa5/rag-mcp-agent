@@ -66,7 +66,11 @@ def _should_fail_over(exc: Exception) -> bool:
     if status == 429 or (isinstance(status, int) and status >= 500):
         return True
     return type(exc).__name__ in {
-        "APIConnectionError", "APITimeoutError", "ConnectError", "ReadTimeout", "TimeoutException"
+        "APIConnectionError",
+        "APITimeoutError",
+        "ConnectError",
+        "ReadTimeout",
+        "TimeoutException",
     }
 
 

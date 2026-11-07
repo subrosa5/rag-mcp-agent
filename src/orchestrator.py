@@ -51,7 +51,11 @@ def answer_agent(
                 retry_after = max(1, min(86400, int(float(headers.get("retry-after", "60")))))
             except (ValueError, AttributeError):
                 retry_after = 60
-            result = {**abstain("rate_limited"), "status": "unavailable", "retry_after": retry_after}
+            result = {
+                **abstain("rate_limited"),
+                "status": "unavailable",
+                "retry_after": retry_after,
+            }
         else:
             log.warning("Answer pipeline unavailable (%s)", type(exc).__name__)
             result = {**abstain("dependency_unavailable"), "status": "unavailable"}
