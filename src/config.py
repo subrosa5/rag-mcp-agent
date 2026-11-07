@@ -18,6 +18,8 @@ CRITIC_MODEL = os.environ.get("CRITIC_MODEL", LLM_MODEL)
 LLM_TIMEOUT = float(os.environ.get("LLM_TIMEOUT", "30"))
 REASONING_EFFORT = os.environ.get("REASONING_EFFORT", "low")
 MAX_COMPLETION_TOKENS = int(os.environ.get("MAX_COMPLETION_TOKENS", "2048"))
+COHERE_LLM_MODEL = os.environ.get("COHERE_LLM_MODEL", "command-a-plus-05-2026")
+COHERE_API_KEY = os.environ.get("COHERE_API_KEY")
 
 # --- эмбеддинги и реранкинг: два бэкенда за одним интерфейсом (src/embeddings.py) ---
 #
@@ -34,7 +36,6 @@ MAX_COMPLETION_TOKENS = int(os.environ.get("MAX_COMPLETION_TOKENS", "2048"))
 # интервью: "как ты выбираешь self-hosted vs managed inference?" — ответ
 # здесь буквально закодирован как явный trade-off, а не решён втихую.
 USE_COHERE = os.environ.get("USE_COHERE", "false").lower() == "true"
-COHERE_API_KEY = os.environ.get("COHERE_API_KEY")
 
 if USE_COHERE:
     EMBEDDING_MODEL = "embed-multilingual-v3.0"

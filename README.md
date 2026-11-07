@@ -43,7 +43,7 @@ python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-local.txt
 cp .env.example .env
-# Заполните GROQ_API_KEY, DATABASE_URL и API_KEY.
+# Заполните GROQ_API_KEY, COHERE_API_KEY, DATABASE_URL и API_KEY.
 # Для локального демо вместо API_KEY можно явно задать DEMO_MODE=true.
 python -m src.ingest
 uvicorn src.api:app --reload
@@ -53,6 +53,10 @@ Postgres должен поддерживать pgvector и Unicode-aware LC_CTYP
 `en_US.UTF-8`). `init_schema()` проверяет регистр кириллицы и размерность вектора.
 Cohere-режим: установите `requirements.txt`, задайте `USE_COHERE=true` и
 `COHERE_API_KEY`, затем запустите индексацию. Он не требует загрузки torch.
+Если Groq недоступен или отвечает 429/5xx, LLM-вызовы автоматически повторяются
+через OpenAI-совместимый Cohere Chat API (`COHERE_LLM_MODEL`, по умолчанию
+`command-a-plus-05-2026`). Для этого используется тот же `COHERE_API_KEY`;
+отдельный ключ не нужен. Ошибки валидации запросов не переключают провайдера.
 
 `constraints.txt` фиксирует проверенный набор зависимостей. MCP устанавливается
 через `requirements-mcp.txt`; тесты и линтер — через `requirements-dev.txt`.

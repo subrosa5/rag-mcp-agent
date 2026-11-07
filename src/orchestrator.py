@@ -2,8 +2,6 @@
 
 import logging
 
-from groq import RateLimitError
-
 from .agent import run_agent_verbose
 from .critic import critique
 from .grounding import abstain
@@ -46,17 +44,17 @@ def answer_agent(
             if ok:
                 break
             result = {**abstain("review_rejected"), "evidence": result.get("evidence", [])}
-    except RateLimitError as exc:
-        try:
-            retry_after = max(
-                1, min(86400, int(float(exc.response.headers.get("retry-after", "60"))))
-            )
-        except (ValueError, AttributeError):
-            retry_after = 60
-        result = {**abstain("rate_limited"), "status": "unavailable", "retry_after": retry_after}
     except Exception as exc:
-        log.warning("Answer pipeline unavailable (%s)", type(exc).__name__)
-        result = {**abstain("dependency_unavailable"), "status": "unavailable"}
+        if getattr(exc, "status_code", None) == 429:
+            headers = getattr(getattr(exc, "response", None), "headers", {})
+            try:
+                retry_after = max(1, min(86400, int(float(headers.get("retry-after", "60")))))
+            except (ValueError, AttributeError):
+                retry_after = 60
+            result = {**abstain("rate_limited"), "status": "unavailable", "retry_after": retry_after}
+        else:
+            log.warning("Answer pipeline unavailable (%s)", type(exc).__name__)
+            result = {**abstain("dependency_unavailable"), "status": "unavailable"}
     return {**result, "stats": get_stats()}
 
 

@@ -1,4 +1,4 @@
-"""tracing.py — cost/latency трекинг поверх Groq-вызовов.
+"""Tracing for primary Groq calls and automatic Cohere failover.
 
 Зачем отдельный модуль, а не time.time() в каждом файле: четыре агента
 (guardrail, query_rewriter, agent, critic) дёргают Groq независимо друг от
@@ -25,6 +25,7 @@ billng API, а не хардкодить. Это демонстрация мех
 
 import os
 import time
+from functools import lru_cache
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass
 
@@ -45,6 +46,28 @@ class CallRecord:
 
 
 _calls: ContextVar[list[CallRecord] | None] = ContextVar("_calls", default=None)
+
+
+@lru_cache(maxsize=1)
+def _cohere_fallback_client():
+    """Cohere's OpenAI-compatible endpoint; uses the existing embedding key."""
+    from openai import OpenAI
+
+    return OpenAI(
+        api_key=config.COHERE_API_KEY,
+        base_url="https://api.cohere.ai/compatibility/v1",
+        timeout=config.LLM_TIMEOUT,
+        max_retries=0,
+    )
+
+
+def _should_fail_over(exc: Exception) -> bool:
+    status = getattr(exc, "status_code", None)
+    if status == 429 or (isinstance(status, int) and status >= 500):
+        return True
+    return type(exc).__name__ in {
+        "APIConnectionError", "APITimeoutError", "ConnectError", "ReadTimeout", "TimeoutException"
+    }
 
 
 def reset() -> None:
@@ -68,7 +91,19 @@ def traced_completion(client, agent: str, **kwargs):
     kwargs.setdefault("max_completion_tokens", config.MAX_COMPLETION_TOKENS)
     if kwargs.get("model", "").startswith("openai/gpt-oss-"):
         kwargs.setdefault("reasoning_effort", config.REASONING_EFFORT)
-    resp = client.chat.completions.create(**kwargs)
+    used_kwargs = kwargs
+    try:
+        resp = client.chat.completions.create(**kwargs)
+    except Exception as exc:
+        if not config.COHERE_API_KEY or not _should_fail_over(exc):
+            raise
+        # Groq-specific options/models do not apply to Cohere. Keep tool schemas
+        # and JSON Schema response_format intact so existing validation remains.
+        used_kwargs = {**kwargs, "model": config.COHERE_LLM_MODEL}
+        used_kwargs.pop("reasoning_effort", None)
+        if "max_completion_tokens" in used_kwargs:
+            used_kwargs["max_tokens"] = used_kwargs.pop("max_completion_tokens")
+        resp = _cohere_fallback_client().chat.completions.create(**used_kwargs)
     latency_ms = (time.perf_counter() - t0) * 1000
 
     usage = getattr(resp, "usage", None)
@@ -82,7 +117,7 @@ def traced_completion(client, agent: str, **kwargs):
     calls.append(
         CallRecord(
             agent=agent,
-            model=kwargs.get("model", ""),
+            model=used_kwargs.get("model", ""),
             latency_ms=round(latency_ms, 1),
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
