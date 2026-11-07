@@ -25,9 +25,9 @@ billng API, а не хардкодить. Это демонстрация мех
 
 import os
 import time
-from functools import lru_cache
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass
+from functools import lru_cache
 
 from . import config
 
