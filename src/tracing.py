@@ -1,4 +1,4 @@
-"""tracing.py — cost/latency трекинг поверх Groq-вызовов.
+"""Tracing for primary Groq calls and automatic Cohere failover.
 
 Зачем отдельный модуль, а не time.time() в каждом файле: четыре агента
 (guardrail, query_rewriter, agent, critic) дёргают Groq независимо друг от
@@ -22,12 +22,17 @@ openai/gpt-oss-20b) — для реального прода их надо тя�
 billng API, а не хардкодить. Это демонстрация механизма трекинга, не
 биллинговая система.
 """
+
+import os
 import time
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass
+from functools import lru_cache
 
-PRICE_PER_1M_INPUT_USD = 0.10
-PRICE_PER_1M_OUTPUT_USD = 0.50
+from . import config
+
+PRICE_PER_1M_INPUT_USD = float(os.environ.get("LLM_INPUT_USD_PER_MILLION", "0.075"))
+PRICE_PER_1M_OUTPUT_USD = float(os.environ.get("LLM_OUTPUT_USD_PER_MILLION", "0.30"))
 
 
 @dataclass
@@ -41,6 +46,32 @@ class CallRecord:
 
 
 _calls: ContextVar[list[CallRecord] | None] = ContextVar("_calls", default=None)
+
+
+@lru_cache(maxsize=1)
+def _cohere_fallback_client():
+    """Cohere's OpenAI-compatible endpoint; uses the existing embedding key."""
+    from openai import OpenAI
+
+    return OpenAI(
+        api_key=config.COHERE_API_KEY,
+        base_url="https://api.cohere.ai/compatibility/v1",
+        timeout=config.LLM_TIMEOUT,
+        max_retries=0,
+    )
+
+
+def _should_fail_over(exc: Exception) -> bool:
+    status = getattr(exc, "status_code", None)
+    if status == 429 or (isinstance(status, int) and status >= 500):
+        return True
+    return type(exc).__name__ in {
+        "APIConnectionError",
+        "APITimeoutError",
+        "ConnectError",
+        "ReadTimeout",
+        "TimeoutException",
+    }
 
 
 def reset() -> None:
@@ -61,7 +92,22 @@ def traced_completion(client, agent: str, **kwargs):
         _calls.set(calls)
 
     t0 = time.perf_counter()
-    resp = client.chat.completions.create(**kwargs)
+    kwargs.setdefault("max_completion_tokens", config.MAX_COMPLETION_TOKENS)
+    if kwargs.get("model", "").startswith("openai/gpt-oss-"):
+        kwargs.setdefault("reasoning_effort", config.REASONING_EFFORT)
+    used_kwargs = kwargs
+    try:
+        resp = client.chat.completions.create(**kwargs)
+    except Exception as exc:
+        if not config.COHERE_API_KEY or not _should_fail_over(exc):
+            raise
+        # Groq-specific options/models do not apply to Cohere. Keep tool schemas
+        # and JSON Schema response_format intact so existing validation remains.
+        used_kwargs = {**kwargs, "model": config.COHERE_LLM_MODEL}
+        used_kwargs.pop("reasoning_effort", None)
+        if "max_completion_tokens" in used_kwargs:
+            used_kwargs["max_tokens"] = used_kwargs.pop("max_completion_tokens")
+        resp = _cohere_fallback_client().chat.completions.create(**used_kwargs)
     latency_ms = (time.perf_counter() - t0) * 1000
 
     usage = getattr(resp, "usage", None)
@@ -72,14 +118,16 @@ def traced_completion(client, agent: str, **kwargs):
         + completion_tokens / 1_000_000 * PRICE_PER_1M_OUTPUT_USD
     )
 
-    calls.append(CallRecord(
-        agent=agent,
-        model=kwargs.get("model", ""),
-        latency_ms=round(latency_ms, 1),
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
-        cost_usd=round(cost, 6),
-    ))
+    calls.append(
+        CallRecord(
+            agent=agent,
+            model=used_kwargs.get("model", ""),
+            latency_ms=round(latency_ms, 1),
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cost_usd=round(cost, 6),
+        )
+    )
     return resp
 
 
@@ -88,6 +136,7 @@ def get_stats() -> dict:
     агентов дёрнули Groq, сколько это заняло по времени и в деньгах."""
     calls = _calls.get() or []
     return {
+        "cost_scope": "estimated LLM only; excludes embeddings/reranking; configure prices when changing models",
         "calls": [asdict(c) for c in calls],
         "total_llm_calls": len(calls),
         "total_latency_ms": round(sum(c.latency_ms for c in calls), 1),

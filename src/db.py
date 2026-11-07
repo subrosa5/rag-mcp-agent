@@ -4,9 +4,13 @@
 абстракции, который на интервью сложнее объяснить, чем сам SQL. Здесь ты
 видишь ровно тот запрос, который уходит в базу.
 """
+
+import re
+from contextlib import contextmanager
+
+import numpy as np
 import psycopg
 from pgvector.psycopg import register_vector
-from contextlib import contextmanager
 
 from . import config
 
@@ -18,9 +22,15 @@ def _raw_conn():
     свежей базе (например, только что созданный Neon-проект) этого типа ещё
     нет, пока не выполнен CREATE EXTENSION. Курица и яйцо: нельзя
     зарегистрировать тип раньше, чем расширение, которое его создаёт."""
-    conn = psycopg.connect(config.DATABASE_URL, autocommit=True)
+    conn = psycopg.connect(
+        config.DATABASE_URL,
+        autocommit=True,
+        connect_timeout=5,
+    )
     try:
-        yield conn
+        with conn.transaction():
+            conn.execute("SET LOCAL statement_timeout = '10s'")
+            yield conn
     finally:
         conn.close()
 
@@ -30,10 +40,16 @@ def get_conn():
     """Контекстный менеджер: открыли соединение, зарегистрировали тип vector, отдали, закрыли.
     Предполагает, что init_schema() уже отработал (расширение существует) —
     иначе см. _raw_conn."""
-    conn = psycopg.connect(config.DATABASE_URL, autocommit=True)
-    register_vector(conn)  # без этого psycopg не знает, как сериализовать numpy-массив в vector(N)
+    conn = psycopg.connect(
+        config.DATABASE_URL,
+        autocommit=True,
+        connect_timeout=5,
+    )
     try:
-        yield conn
+        with conn.transaction():
+            conn.execute("SET LOCAL statement_timeout = '10s'")
+            register_vector(conn)
+            yield conn
     finally:
         conn.close()
 
@@ -49,6 +65,10 @@ def init_schema() -> None:
     автоматизировано: молчаливая ALTER-миграция типа колонки — плохая идея.
     """
     with _raw_conn() as conn:
+        if conn.execute("SELECT lower('АБВ')").fetchone()[0] != "абв":
+            raise ValueError(
+                "Database LC_CTYPE must support Unicode case folding (e.g. en_US.UTF-8)"
+            )
         conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
         conn.execute(
             f"""CREATE TABLE IF NOT EXISTS chunks (
@@ -64,6 +84,17 @@ def init_schema() -> None:
             """CREATE INDEX IF NOT EXISTS chunks_embedding_hnsw_idx
                ON chunks USING hnsw (embedding vector_cosine_ops)"""
         )
+
+        actual = conn.execute("""SELECT format_type(atttypid, atttypmod)
+            FROM pg_attribute WHERE attrelid = 'chunks'::regclass
+            AND attname = 'embedding'""").fetchone()[0]
+        if actual != f"vector({config.EMBEDDING_DIM})":
+            raise ValueError("Embedding dimension changed: use a new database and re-ingest")
+        conn.execute("""CREATE TABLE IF NOT EXISTS index_metadata (
+            singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+            embedding_model TEXT NOT NULL, embedding_dim INTEGER NOT NULL)""")
+        conn.execute("""CREATE INDEX IF NOT EXISTS chunks_lexical_idx ON chunks USING gin
+            ((to_tsvector('russian', content) || to_tsvector('simple', content)))""")
 
 
 def insert_chunks(rows: list[tuple[str, int, str, "np.ndarray"]]) -> None:
@@ -89,9 +120,14 @@ def transaction():
     разом (commit), либо ничего (rollback при любом исключении). autocommit
     здесь намеренно False — в отличие от get_conn()/_raw_conn(), где каждый
     вызов сам по себе атомарен, но independent от соседних вызовов."""
-    conn = psycopg.connect(config.DATABASE_URL, autocommit=False)
-    register_vector(conn)
+    conn = psycopg.connect(
+        config.DATABASE_URL,
+        autocommit=False,
+        connect_timeout=5,
+    )
     try:
+        conn.execute("SET LOCAL statement_timeout = '10s'")
+        register_vector(conn)
         yield conn
         conn.commit()
     except Exception:
@@ -108,7 +144,15 @@ def reindex(all_rows: list[tuple[str, int, str, "np.ndarray"]]) -> None:
     сбой на середине переиндексации (или чужой запрос ровно в этот момент)
     мог увидеть пустую или наполовину заполненную таблицу chunks."""
     with transaction() as conn:
+        if not all_rows:
+            raise ValueError("Refusing empty reindex")
         conn.execute("TRUNCATE chunks RESTART IDENTITY")
+        conn.execute(
+            """INSERT INTO index_metadata VALUES (TRUE, %s, %s)
+            ON CONFLICT (singleton) DO UPDATE SET embedding_model = EXCLUDED.embedding_model,
+            embedding_dim = EXCLUDED.embedding_dim""",
+            (config.EMBEDDING_MODEL, config.EMBEDDING_DIM),
+        )
         if all_rows:
             with conn.cursor() as cur:
                 cur.executemany(
@@ -125,6 +169,7 @@ def vector_search(query_embedding, k: int) -> list[dict]:
     ORDER BY <=> ASC значит "сначала самые близкие" (расстояние маленькое = похоже).
     """
     with get_conn() as conn:
+        validate_index(conn)
         rows = conn.execute(
             """SELECT id, source, content, 1 - (embedding <=> %s) AS score
                FROM chunks
@@ -136,7 +181,38 @@ def vector_search(query_embedding, k: int) -> list[dict]:
 
 
 def fetch_all_chunks() -> list[dict]:
-    """Нужен для BM25-части hybrid search — rank_bm25 живёт в памяти, не в базе."""
+    """Administrative snapshot for offline checks; never used in request retrieval."""
     with get_conn() as conn:
+        validate_index(conn)
         rows = conn.execute("SELECT id, source, content FROM chunks").fetchall()
     return [{"id": r[0], "source": r[1], "content": r[2]} for r in rows]
+
+
+def validate_index(conn) -> None:
+    row = conn.execute(
+        "SELECT embedding_model, embedding_dim FROM index_metadata WHERE singleton"
+    ).fetchone()
+    if row != (config.EMBEDDING_MODEL, config.EMBEDDING_DIM):
+        raise ValueError("Index model mismatch: run ingestion with the configured embedding model")
+
+
+def lexical_search(question: str, k: int) -> list[dict]:
+    # Recall stage: natural-language questions need not match every word.
+    # Quote individual terms so user-supplied query operators remain data.
+    terms = re.findall(r"[\w]+(?:[.-][\w]+)*", question)[:64]
+    if not terms:
+        return []
+    query = " OR ".join(f'"{term}"' for term in terms)
+    with get_conn() as conn:
+        validate_index(conn)
+        rows = conn.execute(
+            """WITH query AS (
+            SELECT websearch_to_tsquery('russian', %s) || websearch_to_tsquery('simple', %s) AS q
+        ) SELECT id, source, content,
+            ts_rank_cd(to_tsvector('russian', content) || to_tsvector('simple', content), q) AS score
+        FROM chunks, query
+        WHERE (to_tsvector('russian', content) || to_tsvector('simple', content)) @@ q
+        ORDER BY score DESC, id LIMIT %s""",
+            (query, query, k),
+        ).fetchall()
+    return [{"id": r[0], "source": r[1], "content": r[2], "score": r[3]} for r in rows]

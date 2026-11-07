@@ -4,18 +4,22 @@
 (модель, k, размер чанка) разбросан по 5 файлам, эксперимент "а что если
 увеличить top_k" превращается в grep по всему проекту. Здесь — одна точка правки.
 """
+
 import os
+
 from dotenv import load_dotenv
 
 load_dotenv()  # читает .env в корне проекта, если он есть
 
 # --- LLM ---
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-# llama-3.1-8b-instant (из большинства туториалов) Groq сняли с линейки —
-# поймано прямо здесь, при первом реальном вызове. openai/gpt-oss-20b:
-# open-weight модель от OpenAI, хостится на Groq, быстрая и поддерживает
-# tool calling — нужно для agent.py.
-LLM_MODEL = "openai/gpt-oss-20b"
+LLM_MODEL = os.environ.get("LLM_MODEL", "openai/gpt-oss-20b")
+CRITIC_MODEL = os.environ.get("CRITIC_MODEL", LLM_MODEL)
+LLM_TIMEOUT = float(os.environ.get("LLM_TIMEOUT", "30"))
+REASONING_EFFORT = os.environ.get("REASONING_EFFORT", "low")
+MAX_COMPLETION_TOKENS = int(os.environ.get("MAX_COMPLETION_TOKENS", "2048"))
+COHERE_LLM_MODEL = os.environ.get("COHERE_LLM_MODEL", "command-a-plus-05-2026")
+COHERE_API_KEY = os.environ.get("COHERE_API_KEY")
 
 # --- эмбеддинги и реранкинг: два бэкенда за одним интерфейсом (src/embeddings.py) ---
 #
@@ -32,14 +36,13 @@ LLM_MODEL = "openai/gpt-oss-20b"
 # интервью: "как ты выбираешь self-hosted vs managed inference?" — ответ
 # здесь буквально закодирован как явный trade-off, а не решён втихую.
 USE_COHERE = os.environ.get("USE_COHERE", "false").lower() == "true"
-COHERE_API_KEY = os.environ.get("COHERE_API_KEY")
 
 if USE_COHERE:
     EMBEDDING_MODEL = "embed-multilingual-v3.0"
-    RERANKER_MODEL = "rerank-multilingual-v3.0"
-    EMBEDDING_DIM = 1024   # у Cohere другая размерность вектора, чем у локальной модели —
-                           # ЭТО ВАЖНО: таблица в базе должна быть создана под то EMBEDDING_DIM,
-                           # которое реально используется (см. db.py::init_schema).
+    RERANKER_MODEL = os.environ.get("RERANKER_MODEL", "rerank-v5.0-fast")
+    EMBEDDING_DIM = 1024  # у Cohere другая размерность вектора, чем у локальной модели —
+    # ЭТО ВАЖНО: таблица в базе должна быть создана под то EMBEDDING_DIM,
+    # которое реально используется (см. db.py::init_schema).
 else:
     # ВАЖНО: all-MiniLM-L6-v2 (дефолт из большинства туториалов) обучен почти
     # только на английском — на русских документах он путает вообще всё
@@ -51,13 +54,17 @@ else:
     EMBEDDING_DIM = 384
 
 # --- чанкинг ---
-CHUNK_SIZE = 500       # символов, не токенов — упрощение ради понятности; в проде считают токенами
-CHUNK_OVERLAP = 100    # 20% — не даёт потерять мысль, разорванную на границе чанка
+CHUNK_SIZE = 500  # символов, не токенов — упрощение ради понятности; в проде считают токенами
+CHUNK_OVERLAP = 100  # 20% — не даёт потерять мысль, разорванную на границе чанка
 
 # --- retrieval ---
-VECTOR_TOP_K = 20       # сколько кандидатов берём из векторного поиска (recall stage)
-RERANK_TOP_K = 4        # сколько оставляем после реранкинга (precision stage) — это уйдёт в промпт
-BM25_TOP_K = 20          # столько же кандидатов берём из lexical-поиска для hybrid
+VECTOR_TOP_K = 20  # сколько кандидатов берём из векторного поиска (recall stage)
+RERANK_TOP_K = 4  # сколько оставляем после реранкинга (precision stage) — это уйдёт в промпт
+BM25_TOP_K = 20  # столько же кандидатов берём из lexical-поиска для hybrid
 
 # --- база данных ---
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://localhost/rag_agent")
+
+# Scores are model-specific, not probabilities. Calibrate on held-out data.
+MIN_RERANK_SCORE = float(os.environ.get("MIN_RERANK_SCORE", "0.1" if USE_COHERE else "0.0"))
+RERANK_CANDIDATES = 30

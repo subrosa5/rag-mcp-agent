@@ -2,10 +2,11 @@
 
 Запуск: python -m src.ingest
 """
+
 import glob
 import os
 
-from . import config, db
+from . import db
 from .chunking import chunk_text
 from .embeddings import embed
 
@@ -26,7 +27,7 @@ def run():
         return
 
     print(f"Найдено документов: {len(docs)}")
-    db.init_schema()   # идемпотентно: создаст таблицу/индекс, если их ещё нет (новая база — Neon и т.п.)
+    db.init_schema()  # идемпотентно: создаст таблицу/индекс, если их ещё нет (новая база — Neon и т.п.)
 
     # Сначала считаем чанки и эмбеддинги для ВСЕХ документов в памяти, и
     # только потом одним махом пишем в базу через db.reindex() — TRUNCATE и
@@ -43,11 +44,13 @@ def run():
         vectors = embed(pieces)  # одним батчем — быстрее, чем по одному чанку
         rows = [
             (source, i, chunk, vec)
-            for i, (chunk, vec) in enumerate(zip(pieces, vectors))
+            for i, (chunk, vec) in enumerate(zip(pieces, vectors, strict=True))
         ]
         all_rows.extend(rows)
         per_doc_counts.append((source, len(rows)))
 
+    if not all_rows:
+        raise ValueError("Refusing to replace index with an empty corpus")
     db.reindex(all_rows)
 
     for source, count in per_doc_counts:

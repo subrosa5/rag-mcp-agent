@@ -5,4 +5,4 @@
 # Установка: pip install -r requirements-mcp.txt   (уже включает requirements.txt)
 -r requirements.txt
 
-mcp>=1.2
+mcp>=2.3,<3

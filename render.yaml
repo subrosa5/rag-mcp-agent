@@ -24,5 +24,9 @@ services:
         sync: false
       - key: DATABASE_URL
         sync: false
+      - key: API_KEY
+        sync: false
+      - key: DEMO_MODE
+        value: "false"
       - key: ALLOWED_ORIGIN
         sync: false

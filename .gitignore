@@ -2,3 +2,8 @@
 __pycache__/
 *.pyc
 .env
+
+.venv312/
+.pytest_cache/
+.ruff_cache/
+eval-results*.json

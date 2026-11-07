@@ -1,3 +1,4 @@
+-c constraints.txt
 # Базовый набор — то, что ставится ВСЕГДА, в том числе на Render.
 # Никакого torch/sentence-transformers здесь нарочно нет — см. requirements-local.txt.
 
@@ -7,13 +8,11 @@ pgvector>=0.3
 
 # --- LLM ---
 groq>=0.11
+openai>=1.55,<2
 
 # --- эмбеддинги/реранкинг через Cohere API (USE_COHERE=true) ---
 cohere>=5.11
 numpy>=1.26   # нужен даже без local-бэкенда: оборачиваем cohere-эмбеддинги в ndarray для pgvector
-
-# --- lexical search для hybrid retrieval ---
-rank-bm25>=0.2.2
 
 # --- конфиг ---
 python-dotenv>=1.0

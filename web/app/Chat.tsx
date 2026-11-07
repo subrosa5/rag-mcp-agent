@@ -2,7 +2,8 @@
 
 import { useState, useRef, useEffect } from "react";
 
-type Message = { role: "user" | "assistant"; content: string };
+type Source = { id: string; source: string; content: string; citation: number };
+type Message = { role: "user" | "assistant"; content: string; sources?: Source[]; status?: string };
 
 const EXAMPLES = [
   "Сколько времени занимает откат деплоя?",
@@ -28,7 +29,7 @@ export default function Chat() {
     // увидеть предыдущие сообщения как контекст, а не как часть нового
     // вопроса. Обрезка под контекстное окно — забота бэкенда (src/memory.py),
     // фронт просто шлёт всё, что накопилось в чате.
-    const history = messages;
+    const history = messages.slice(-10).map(({ role, content }) => ({ role, content: content.slice(0, 8000) }));
 
     setMessages((prev) => [...prev, { role: "user", content: question }]);
     setInput("");
@@ -44,7 +45,7 @@ export default function Chat() {
       const answer = res.ok
         ? data.answer
         : `Ошибка: ${data.error ?? "не удалось получить ответ"}`;
-      setMessages((prev) => [...prev, { role: "assistant", content: answer }]);
+      setMessages((prev) => [...prev, { role: "assistant", content: answer, sources: data.sources, status: data.status }]);
     } catch {
       setMessages((prev) => [
         ...prev,
@@ -94,6 +95,15 @@ export default function Chat() {
               }`}
             >
               {m.content}
+              {m.status === "insufficient_evidence" && (
+                <p className="mt-2 text-xs text-amber-300">Недостаточно подтверждений в источниках</p>
+              )}
+              {m.sources?.map((source) => (
+                <details key={source.id} className="mt-3 border-t border-neutral-600 pt-2 text-sm">
+                  <summary className="cursor-pointer text-neutral-300">[{source.citation}] {source.source}</summary>
+                  <p className="mt-2 text-neutral-400">{source.content}</p>
+                </details>
+              ))}
             </div>
           </div>
         ))}
@@ -111,6 +121,8 @@ export default function Chat() {
         <input
           className="flex-1 rounded-xl bg-neutral-800 px-4 py-2 outline-none focus:ring-1 focus:ring-neutral-500"
           placeholder="Спроси что-нибудь…"
+          maxLength={4000}
+          aria-label="Вопрос по документам"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && send()}
